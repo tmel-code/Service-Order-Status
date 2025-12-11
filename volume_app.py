@@ -27,4 +27,22 @@ def load_data(file, header_idx):
 # --- 3. MAIN APP STRUCTURE ---
 
 # A. UPLOAD SECTION (Top of Main Page)
-uploaded_file = st.file_uploader("Upload Report",
+uploaded_file = st.file_uploader("Upload Report", type=['xlsx', 'xls', 'csv'])
+
+# B. SIDEBAR SETTINGS & SUMMARY
+with st.sidebar:
+    st.header("⚙️ Settings")
+    if st.button("🗑️ Reset"):
+        st.cache_data.clear()
+        st.rerun()
+    header_row = st.number_input("Header Row (0=First Row)", value=0)
+    
+    st.divider()
+    st.header("📊 Status Summary")
+    
+    # Placeholder for summary (will be filled after data loads)
+    summary_placeholder = st.empty()
+
+# C. PROCESSING & DISPLAY
+if uploaded_file:
+    df =
