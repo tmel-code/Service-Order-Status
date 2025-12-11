@@ -3,27 +3,27 @@ import pandas as pd
 import io
 
 # --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Volume & Value v28", layout="wide")
-st.title("💰 Service Order Volume & Value (Diagnostic)")
-st.markdown("""
-**Troubleshooting Mode:**
-1. Upload your file.
-2. **Look at the 'Raw Data Preview' below.** 3. If the first row is junk text, increase **'Header Row'** in the sidebar until you see correct column names.
-""")
+st.set_page_config(page_title="Service Order Manager", layout="wide")
+st.title("💰 Service Order Manager (Volume & Value)")
+st.markdown("Automated Tracker: Counts **Unique Orders** and Sums **Total Value** by Status.")
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR SETTINGS ---
 with st.sidebar:
     st.header("⚙️ Settings")
     if st.button("🗑️ Reset App"):
         st.cache_data.clear()
         st.rerun()
     header_row = st.number_input("Header Row (0=First Row)", value=0)
+    
+    st.divider()
+    st.header("📊 Status Summary")
+    summary_box = st.container()
 
-# --- 3. ROBUST LOADER ---
+# --- 3. SMART LOADER ---
 @st.cache_data
 def load_data(file, header_idx):
     if not file: return None
-    # Unbreakable loader logic
+    # Try multiple ways to open file
     methods = [
         ('openpyxl', None), ('xlrd', None), 
         ('python', ','), ('python', ';'), ('python', '\t')
@@ -31,8 +31,11 @@ def load_data(file, header_idx):
     for engine, sep in methods:
         try:
             file.seek(0)
-            if sep: return pd.read_csv(file, header=header_idx, sep=sep, engine=engine)
-            else: return pd.read_excel(file, sheet_name=0, header=header_idx, engine=engine)
+            if sep: df = pd.read_csv(file, header=header_idx, sep=sep, engine=engine)
+            else: df = pd.read_excel(file, sheet_name=0, header=header_idx, engine=engine)
+            
+            # Basic validation: must have at least 1 column
+            if len(df.columns) > 1: return df
         except: continue
     return None
 
@@ -43,92 +46,104 @@ if uploaded_file:
     df = load_data(uploaded_file, header_row)
 
     if df is not None:
-        # --- A. DIAGNOSTIC PREVIEW ---
-        st.divider()
-        st.subheader("1. Raw Data Preview (Check Headers)")
-        st.write("Do these columns look correct? If not, change 'Header Row' in Sidebar.")
-        st.dataframe(df.head(3), use_container_width=True)
-
-        # --- B. SELECT COLUMNS ---
-        st.divider()
-        st.subheader("2. Select Columns")
+        # --- A. SMART COLUMN DETECTION ---
         cols = df.columns.tolist()
         
-        # Helper to find column index
-        def get_idx(keywords):
-            for i, c in enumerate(cols):
-                if any(k in str(c) for k in keywords): return i
-            return 0
+        # Helper to find best column match
+        def find_col(keywords):
+            # 1. Exact match (case insensitive)
+            for c in cols:
+                if str(c).strip().lower() in keywords: return c
+            # 2. Partial match
+            for c in cols:
+                if any(k in str(c).strip().lower() for k in keywords): return c
+            return cols[0]
 
-        c1, c2, c3 = st.columns(3)
-        id_col = c1.selectbox("Order ID:", cols, index=get_idx(['ServiceOrder', 'Order']))
-        stat_col = c2.selectbox("Status:", cols, index=get_idx(['SOStatus', 'Status']))
-        sales_col = c3.selectbox("Sales Value:", cols, index=get_idx(['TotalSales', 'Sales', 'Amount']))
+        # Auto-Select
+        default_id = find_col(['serviceorder', 'service order', 'order'])
+        default_stat = find_col(['sostatus', 'so status', 'status'])
+        default_sale = find_col(['totalsales', 'total sales', 'sales', 'amount', 'total'])
 
-        # --- C. CALCULATE ---
+        # Show Selectors (Hidden by default to reduce clutter)
+        with st.expander("⚙️ Verify Columns (Click to Edit)", expanded=False):
+            c1, c2, c3 = st.columns(3)
+            id_col = c1.selectbox("Order ID:", cols, index=cols.index(default_id))
+            stat_col = c2.selectbox("SO Status:", cols, index=cols.index(default_stat))
+            sales_col = c3.selectbox("Total Sales:", cols, index=cols.index(default_sale))
+
+        # --- B. DATA PROCESSING ---
         
-        # 1. Clean Sales (Handle $ and ,)
+        # 1. Clean Sales (Handle Text/Numbers mixed)
+        # Force convert to numeric, turning errors to 0
         df['CleanSales'] = pd.to_numeric(
             df[sales_col].astype(str).str.replace(r'[^\d.,-]', '', regex=True), 
             errors='coerce'
         ).fillna(0)
         
-        # 2. Filter Valid IDs (Remove Quotes/Empty)
+        # 2. Filter Valid Orders (Remove Empty/Quotes)
         df_clean = df.dropna(subset=[id_col])
         df_clean = df_clean[df_clean[id_col].astype(str).str.strip() != '']
         
-        # 3. Calculate Logic
-        # Group by Status
-        # - Count: Unique Order IDs
-        # - Value: Sum of CleanSales (All lines)
-        summary = df_clean.groupby(stat_col).agg({
+        # 3. Calculate Grouped Stats
+        # Group by Status -> Count Unique IDs, Sum All Sales
+        stats = df_clean.groupby(stat_col).agg({
             id_col: 'nunique',
             'CleanSales': 'sum'
         }).reset_index()
         
-        summary.columns = ['Status', 'Count', 'Value']
-        summary = summary.sort_values('Count', ascending=False)
+        stats.columns = ['Status', 'Count', 'Value']
+        stats = stats.sort_values('Count', ascending=False)
         
-        # Totals
+        # Global Totals
         total_unique = df_clean[id_col].nunique()
         total_val = df_clean['CleanSales'].sum()
 
-        # --- D. DISPLAY RESULTS ---
-        st.divider()
-        st.subheader("3. Results")
-        
-        # Top Metrics
-        m1, m2 = st.columns(2)
-        m1.metric("TOTAL UNIQUE ORDERS", f"{total_unique:,}")
-        m2.metric("TOTAL VALUE", f"${total_val:,.2f}")
-        
-        # Sidebar Summary (As requested)
-        with st.sidebar:
-            st.divider()
-            st.header("📊 Breakdown")
-            for _, row in summary.iterrows():
+        # --- C. SIDEBAR SUMMARY ---
+        with summary_box:
+            st.metric("TOTAL ORDERS", f"{total_unique:,}")
+            st.metric("TOTAL VALUE", f"${total_val:,.2f}")
+            st.markdown("---")
+            for _, row in stats.iterrows():
                 st.write(f"**{row['Status']}**")
                 st.caption(f"📦 {row['Count']:,} | 💰 ${row['Value']:,.2f}")
                 st.write("---")
 
-        # --- E. FILTER & VIEW ---
-        c_left, c_right = st.columns([1, 2])
+        # --- D. MAIN DASHBOARD ---
         
-        with c_left:
-            st.write("### Filter")
-            sel_stat = st.radio("Select Status:", ["Show All"] + summary['Status'].tolist())
+        # Filter UI
+        st.divider()
+        col_filter, col_view = st.columns([1, 3])
+        
+        with col_filter:
+            st.subheader("Filter")
+            options = ["Show All"] + stats['Status'].tolist()
+            selected_stat = st.radio("Select Status:", options)
             
             # Export
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                summary.to_excel(writer, sheet_name='Summary', index=False)
+                stats.to_excel(writer, sheet_name='Summary', index=False)
                 df_clean.to_excel(writer, sheet_name='Full_Data', index=False)
-            st.download_button("💾 Download Excel", buffer, "Volume_Value_Report.xlsx")
+            st.download_button("💾 Download Excel", buffer, "Service_Order_Report.xlsx")
 
-        with c_right:
-            st.write(f"### Order List: {sel_stat}")
-            if sel_stat == "Show All":
-                st.dataframe(df_clean, use_container_width=True)
+        with col_view:
+            st.subheader(f"List: {selected_stat}")
+            
+            # Filter Data
+            if selected_stat == "Show All":
+                display_df = df_clean
             else:
-                filtered = df_clean[df_clean[stat_col] == sel_stat]
-                st.dataframe(filtered, use_container_width=True)
+                display_df = df_clean[df_clean[stat_col] == selected_stat]
+                
+            # Show Metrics for Selection
+            sub_cnt = display_df[id_col].nunique()
+            sub_val = display_df['CleanSales'].sum()
+            
+            m1, m2 = st.columns(2)
+            m1.metric("Selected Volume", f"{sub_cnt:,} Orders")
+            m2.metric("Selected Value", f"${sub_val:,.2f}")
+            
+            # Show Table (Simplified Columns)
+            # We try to show relevant columns only
+            show_cols = [id_col, stat_col, 'CleanSales'] + [c for c in df.columns if c not in [id_col, stat_col, sales_col, 'CleanSales']][:5]
+            st.dataframe(display_df[show_cols], use_container_width=True, hide_index=True)
