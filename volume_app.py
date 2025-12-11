@@ -45,4 +45,25 @@ with st.sidebar:
 
 # C. PROCESSING & DISPLAY
 if uploaded_file:
-    df =
+    df = load_data(uploaded_file, header_row)
+
+    if df is not None:
+        # 1. Detect Columns
+        cols = df.columns.tolist()
+        def get_col(candidates):
+            for c in cols:
+                if any(x in str(c) for x in candidates): return c
+            return cols[0]
+            
+        id_col = get_col(['ServiceOrder', 'Order'])
+        stat_col = get_col(['SOStatus', 'Status'])
+
+        # 2. Process Data (Volume Only)
+        # Filter valid IDs
+        df_clean = df.dropna(subset=[id_col])
+        df_clean = df_clean[df_clean[id_col].astype(str).str.strip() != '']
+        
+        # Deduplicate (Unique Orders)
+        df_unique = df_clean.drop_duplicates(subset=[id_col])
+        
+        #
