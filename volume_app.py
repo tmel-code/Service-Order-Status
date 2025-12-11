@@ -2,19 +2,41 @@ import streamlit as st
 import pandas as pd
 import io
 
-# --- 1. PAGE CONFIG ---
-st.set_page_config(page_title="Service Order Volume Counter", layout="wide")
-st.title("🔢 Service Order Volume Counter")
-st.markdown("This app counts **Unique Orders** (Volume) and summarizes them by Status.")
+# --- 1. PAGE SETUP ---
+st.set_page_config(page_title="Volume Counter v24", layout="wide")
+st.title("🔢 Service Order Volume Counter (Diagnostic)")
+st.markdown("""
+**TROUBLESHOOTING:**
+1. Upload your file.
+2. Look at the **'Data Preview'** below.
+3. If the first row looks like junk (or "Unnamed"), increase the **Header Row** in the Sidebar until you see **'ServiceOrder'** and **'SOStatus'** at the top.
+""")
 
-# --- 2. ROBUST LOADER ---
+# --- 2. SIDEBAR SETTINGS ---
+with st.sidebar:
+    st.header("⚙️ Step 1: Fix Headers")
+    if st.button("🗑️ Reset App"):
+        st.cache_data.clear()
+        st.rerun()
+    
+    # Crucial Setting
+    header_row = st.number_input("Header Row Number:", value=0, min_value=0, help="Increase this if your file has a title/logo at the top.")
+    
+    st.divider()
+    st.header("📊 Status Summary")
+    summary_placeholder = st.empty() # Will fill this later
+
+# --- 3. UNIVERSAL LOADER ---
 @st.cache_data
-def load_data(file, header_idx):
+def load_data_v24(file, header_idx):
     if not file: return None
-    # Try multiple engines (Unbreakable method)
+    # Try every method to open the file
     methods = [
-        ('openpyxl', None), ('xlrd', None), 
-        ('python', ','), ('python', ';'), ('python', '\t')
+        ('openpyxl', None), 
+        ('xlrd', None), 
+        ('python', ','), 
+        ('python', ';'), 
+        ('python', '\t')
     ]
     for engine, sep in methods:
         try:
@@ -24,46 +46,31 @@ def load_data(file, header_idx):
         except: continue
     return None
 
-# --- 3. MAIN APP STRUCTURE ---
-
-# A. UPLOAD SECTION (Top of Main Page)
+# --- 4. MAIN APP LOGIC ---
 uploaded_file = st.file_uploader("Upload Report", type=['xlsx', 'xls', 'csv'])
 
-# B. SIDEBAR SETTINGS & SUMMARY
-with st.sidebar:
-    st.header("⚙️ Settings")
-    if st.button("🗑️ Reset"):
-        st.cache_data.clear()
-        st.rerun()
-    header_row = st.number_input("Header Row (0=First Row)", value=0)
-    
-    st.divider()
-    st.header("📊 Status Summary")
-    
-    # Placeholder for summary (will be filled after data loads)
-    summary_placeholder = st.empty()
-
-# C. PROCESSING & DISPLAY
 if uploaded_file:
-    df = load_data(uploaded_file, header_row)
+    # Load
+    df = load_data_v24(uploaded_file, header_row)
 
     if df is not None:
-        # 1. Detect Columns
+        
+        # --- A. DIAGNOSTIC PREVIEW ---
+        st.subheader("👀 Data Preview (Check this!)")
+        st.write("Do the bold words below match your actual Column Headers (ServiceOrder, SOStatus)?")
+        st.dataframe(df.head(3), use_container_width=True)
+        
+        # --- B. SELECT COLUMNS ---
+        st.divider()
+        st.subheader("⚙️ Step 2: Select Columns")
         cols = df.columns.tolist()
-        def get_col(candidates):
-            for c in cols:
-                if any(x in str(c) for x in candidates): return c
-            return cols[0]
-            
-        id_col = get_col(['ServiceOrder', 'Order'])
-        stat_col = get_col(['SOStatus', 'Status'])
+        
+        # Helper to auto-select
+        def get_idx(keywords):
+            for i, c in enumerate(cols):
+                if any(k in str(c) for k in keywords): return i
+            return 0
 
-        # 2. Process Data (Volume Only)
-        # Filter valid IDs
-        df_clean = df.dropna(subset=[id_col])
-        df_clean = df_clean[df_clean[id_col].astype(str).str.strip() != '']
-        
-        # Deduplicate (Unique Orders)
-        df_unique = df_clean.drop_duplicates(subset=[id_col])
-        
-        #
+        c1, c2 = st.columns(2)
+        id_col = c1.selectbox("Order ID Column:", cols, index=get_idx(['ServiceOrder', 'Order']))
+        stat_col = c2.selectbox("SO Status Column:", cols,
