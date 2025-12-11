@@ -6,11 +6,11 @@ import io
 st.set_page_config(page_title="Service Order Volume Counter", layout="wide")
 st.title("🔢 Service Order Volume Counter")
 st.markdown("""
-**Goal:** Calculate exactly how many **Unique Service Orders** exist in the file.
-*(Ignores line items, counts 1 Order per ID)*
+**Goal:** Count **Unique Service Orders** by Status.
+*(1 Order ID = 1 Count, regardless of how many line items it has)*
 """)
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR SETTINGS ---
 with st.sidebar:
     st.header("⚙️ Settings")
     if st.button("🗑️ Reset"):
@@ -18,7 +18,7 @@ with st.sidebar:
         st.rerun()
     header_row = st.number_input("Header Row (0=First Row)", value=0)
 
-# --- 3. ROBUST LOADER (Uses the 'Force' Engine) ---
+# --- 3. ROBUST DATA LOADER ---
 @st.cache_data
 def load_data(file, header_idx):
     if not file: return None
@@ -48,55 +48,34 @@ if uploaded_file:
                 if any(x in str(c) for x in candidates): return c
             return cols[0]
 
+        # Select Columns
         col1, col2 = st.columns(2)
         id_col = col1.selectbox("Select Order ID Column:", cols, index=cols.index(get_col(['ServiceOrder', 'Order'])))
         stat_col = col2.selectbox("Select Status Column:", cols, index=cols.index(get_col(['Status', 'SOStatus'])))
 
         # --- 6. CALCULATION ENGINE ---
         
-        # A. Filter Valid Data
-        # Remove rows where ID is empty (Quotes)
+        # A. Filter Valid Data (Remove Quotes/Empty IDs)
+        # We only want rows that have a Service Order ID
         df_clean = df.dropna(subset=[id_col])
         df_clean = df_clean[df_clean[id_col].astype(str).str.strip() != '']
         
         # B. Deduplicate
-        # We only care about Unique IDs for counting
+        # Keep only ONE row per Service Order ID to count "Volume"
         df_unique = df_clean.drop_duplicates(subset=[id_col])
 
-        # --- 7. DISPLAY DASHBOARD ---
+        # --- 7. DASHBOARD ---
         st.divider()
         
         # METRICS
         total_unique = len(df_unique)
         st.metric("Total Unique Service Orders", f"{total_unique:,}")
         
-        # BREAKDOWN TABLE
-        st.subheader("📊 Breakdown by Status")
-        
-        # Group by Status and Count IDs
-        breakdown = df_unique[stat_col].value_counts().reset_index()
-        breakdown.columns = ['Status', 'Order Count']
-        
+        # --- 8. STATUS FILTER & BREAKDOWN ---
         c1, c2 = st.columns([1, 2])
         
         with c1:
-            # Display the table
-            st.dataframe(breakdown, use_container_width=True, hide_index=True)
-            
-            # Export Button
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                breakdown.to_excel(writer, sheet_name='Summary', index=False)
-                df_unique.to_excel(writer, sheet_name='Unique_Orders_List', index=False)
-            
-            st.download_button("💾 Download Summary Excel", buffer, "Volume_Report.xlsx")
-
-        with c2:
-            # INTERACTIVE FILTER
-            st.subheader("🔍 View Orders")
-            selected_status = st.selectbox("Select a Status to view IDs:", breakdown['Status'].unique())
-            
-            # Show list for that status
-            orders_in_status = df_unique[df_unique[stat_col] == selected_status]
-            st.write(f"Showing {len(orders_in_status)} orders for **{selected_status}**:")
-            st.dataframe(orders_in_status, use_container_width=True)
+            st.subheader("📊 Breakdown by Status")
+            # Calculate Counts
+            breakdown = df_unique[stat_col].value_counts().reset_index()
+            breakdown.columns = ['Status', 'Order Count']
