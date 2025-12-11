@@ -3,9 +3,9 @@ import pandas as pd
 import io
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Service Order Manager v32", layout="wide")
-st.title("💰 Service Order Manager (Fix & Verify)")
-st.markdown("Fixes: **Zero Values** (Comma removal) and **Zero Counts** (Text trimming).")
+st.set_page_config(page_title="Service Order Manager v33", layout="wide")
+st.title("💰 Service Order Manager (Corrected Columns)")
+st.markdown("Fixes: **Correctly identifies 'SOStatus'** vs 'QuoStatus'. Adds **'Completed'** to summary.")
 
 # --- 2. ROBUST LOADER ---
 @st.cache_data
@@ -28,10 +28,9 @@ with st.sidebar:
         st.rerun()
     
     header_row = st.number_input("Header Row Number:", value=0, min_value=0)
-    st.caption("Adjust this until the 'Data Preview' shows correct column names.")
     
     st.divider()
-    st.header("📊 2. Summary")
+    st.header("📊 2. Status Summary")
     summary_box = st.container()
 
 # --- 4. MAIN APP ---
@@ -43,64 +42,70 @@ if uploaded_file:
     if df is not None:
         
         # --- A. DATA PREVIEW ---
-        with st.expander("👀 Data Preview (Click to Open)", expanded=True):
-            st.write("First 3 rows of your file:")
+        with st.expander("👀 Data Preview (Click to check headers)", expanded=False):
             st.dataframe(df.head(3), use_container_width=True)
-            
-            # Check for bad headers
-            if "Unnamed" in str(df.columns[0]):
-                st.error("⚠️ Headers look wrong (Unnamed). Increase 'Header Row Number' in the sidebar!")
 
-        # --- B. COLUMN MAPPING ---
+        # --- B. SMART COLUMN MAPPING (FIXED) ---
         cols = df.columns.tolist()
-        def find_col(keywords):
+        
+        # Priority Search Helper
+        def find_best_col(priority_keywords, fallback_keywords=None):
+            # 1. Try Priority Match (Exact string in column name)
             for c in cols:
-                if any(k in str(c).lower() for k in keywords): return c
+                c_str = str(c).lower().strip()
+                if any(pk in c_str for pk in priority_keywords): return c
+            
+            # 2. Try Fallback (Partial match)
+            if fallback_keywords:
+                for c in cols:
+                    c_str = str(c).lower().strip()
+                    if any(fk in c_str for fk in fallback_keywords): return c
+            
             return cols[0]
 
-        c1, c2, c3 = st.columns(3)
-        id_col = c1.selectbox("Order ID:", cols, index=cols.index(find_col(['serviceorder', 'order'])))
-        stat_col = c2.selectbox("SO Status:", cols, index=cols.index(find_col(['sostatus', 'status'])))
-        sales_col = c3.selectbox("Total Sales:", cols, index=cols.index(find_col(['totalsales', 'sales', 'amount'])))
+        # Improved Logic: Look for "SO" specifically to avoid "QuoStatus"
+        default_id = find_best_col(['serviceorder', 'service order'], ['order'])
+        default_stat = find_best_col(['sostatus', 'so status', 'so_status'], ['status']) 
+        default_sales = find_best_col(['totalsales', 'total sales'], ['sales', 'amount', 'total'])
 
-        # --- C. DATA CLEANING (THE FIX) ---
+        st.subheader("1. Confirm Columns")
+        c1, c2, c3 = st.columns(3)
+        id_col = c1.selectbox("Order ID:", cols, index=cols.index(default_id))
+        stat_col = c2.selectbox("SO Status:", cols, index=cols.index(default_stat))
+        sales_col = c3.selectbox("Total Sales:", cols, index=cols.index(default_sales))
+
+        # --- C. DATA PROCESSING ---
         
-        # 1. CLEAN MONEY (Remove $ and ,)
-        # Converts "1,234.56" -> 1234.56
+        # 1. Clean Money (Remove $ and ,)
         df['CleanSales'] = pd.to_numeric(
-            df[sales_col].astype(str).str.replace(r'[$,]', '', regex=True), 
+            df[sales_col].astype(str).str.replace(r'[^\d.,-]', '', regex=True), 
             errors='coerce'
         ).fillna(0)
 
-        # 2. CLEAN STATUS (Trim spaces, Title Case)
-        # Converts " costed " -> "Costed", "COSTED" -> "Costed"
+        # 2. Clean Status (Trim, Title Case, Fix Blank)
         df['CleanStatus'] = df[stat_col].astype(str).str.strip().str.title()
-        # Handle Blanks
-        df.loc[df['CleanStatus'].isin(['Nan', 'None', '']), 'CleanStatus'] = 'Blank'
+        # Fix known "Empty" strings
+        df.loc[df['CleanStatus'].isin(['Nan', 'None', '', 'Na']), 'CleanStatus'] = 'Blank'
 
-        # 3. FILTER VALID ORDERS
-        # Must have an ID
+        # 3. Filter Valid Orders
         df_processed = df.dropna(subset=[id_col])
         df_processed = df_processed[df_processed[id_col].astype(str).str.strip() != '']
         
-        # --- D. CALCULATE METRICS ---
+        # --- D. METRICS CALCULATION ---
         
-        # Group by Status
-        # Count = Unique IDs
-        # Value = Sum of All Lines
+        # Group by CleanStatus
         status_stats = df_processed.groupby('CleanStatus').agg({
-            id_col: 'nunique',
-            'CleanSales': 'sum'
+            id_col: 'nunique',      # Count Unique
+            'CleanSales': 'sum'     # Sum All Lines
         }).reset_index()
         
         status_stats.columns = ['Status', 'Count', 'Value']
         
-        # Totals
         total_count = df_processed[id_col].nunique()
         total_val = df_processed['CleanSales'].sum()
 
-        # --- E. SIDEBAR SUMMARY ---
-        target_list = ['Costed', 'Released', 'Completed', 'Planned', 'Free', 'Blank']
+        # --- E. SIDEBAR SUMMARY (UPDATED LIST) ---
+        target_list = ['Costed', 'Released', 'Planned', 'Free', 'Completed', 'Blank']
         
         with summary_box:
             st.metric("TOTAL ORDERS", f"{total_count:,}")
@@ -108,7 +113,7 @@ if uploaded_file:
             st.markdown("---")
             
             for target in target_list:
-                # Find row in stats
+                # Find matching row
                 row = status_stats[status_stats['Status'] == target]
                 
                 if not row.empty:
@@ -124,12 +129,12 @@ if uploaded_file:
 
         # --- F. MAIN DISPLAY ---
         st.divider()
-        st.subheader("Filter & View")
+        st.subheader("2. Filter & View")
         
         c_filter, c_view = st.columns([1, 3])
         
         with c_filter:
-            # Filter options
+            # Sort statuses for dropdown
             avail_stats = ["Show All"] + sorted(status_stats['Status'].tolist())
             sel_stat = st.radio("Select Status:", avail_stats)
             
@@ -139,10 +144,6 @@ if uploaded_file:
                 df_processed.to_excel(writer, sheet_name='Full_Data', index=False)
                 status_stats.to_excel(writer, sheet_name='Summary', index=False)
             st.download_button("💾 Download Excel", buffer, "Volume_Value_Report.xlsx")
-            
-            # DEBUG INFO
-            with st.expander("Debug: Statuses Found"):
-                st.write(status_stats)
 
         with c_view:
             if sel_stat == "Show All":
@@ -150,7 +151,7 @@ if uploaded_file:
             else:
                 view_df = df_processed[df_processed['CleanStatus'] == sel_stat]
             
-            # Metrics for View
+            # Selection Metrics
             v_cnt = view_df[id_col].nunique()
             v_val = view_df['CleanSales'].sum()
             
