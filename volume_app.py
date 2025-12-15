@@ -4,7 +4,7 @@ import io
 
 # --- 1. CONFIG ---
 st.set_page_config(page_title="Service Order Manager v33", layout="wide")
-st.title("💰 Service Order Manager (Corrected Columns)")
+st.title("💰 Service Order Manager (Summary)")
 st.markdown("Fixes: **Correctly identifies 'SOStatus'** vs 'QuoStatus'. Adds **'Completed'** to summary.")
 
 # --- 2. ROBUST LOADER ---
